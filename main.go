@@ -18,10 +18,21 @@ func check(e error) {
 	}
 }
 
+func exists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return true, err
+}
+
 func makeDir(dir string) {
-	src, err := os.Stat(dir)
+	dirExists, err := exists(dir)
 	check(err)
-	if !src.IsDir() {
+	if !dirExists {
 		err := os.Mkdir(dir, 0777)
 		check(err)
 	}
@@ -65,8 +76,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	c2 := downloadFromS3AndSave("c2.wav")
 	sox, err := exec.LookPath("sox")
 	check(err)
+	fmt.Println("using sox " + sox)
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	check(err)
+	fmt.Println("using ffmpeg " + ffmpeg)
 	soxArgs := []string{"-t", "wav", "-m", c1, c2, "-p"}
 	soxCommand := exec.Command(sox, soxArgs...)
 	ffmpegArgs := []string{"-i", "-", "-f", "mp3", "-ab", "256k", "pipe:"}
@@ -77,14 +90,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
 	ffmpegCommand.Stdout = &fw
+	ffmpegCommand.Stderr = os.Stdout
 	ffmpegCommand.Start()
 	soxCommand.Run()
 	ffmpegCommand.Wait()
+	fmt.Println("done")
 }
 
 func main() {
 	makeDir(workingDir)
 	makeDir(clipDir)
 	http.HandleFunc("/stream.mp3", handler)
-	http.ListenAndServe(":8080", nil)
+	ServerPort := "5000" // default port
+	if len(os.Getenv("PORT")) > 0 {
+		ServerPort = os.Getenv("PORT")
+	}
+	fmt.Println("Starting server on " + ServerPort)
+	http.ListenAndServe(":"+ServerPort, nil)
 }

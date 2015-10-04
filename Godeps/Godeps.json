@@ -1,0 +1,5 @@
+{
+	"ImportPath": "github.com/UTD-CRSS/audio.exploreapollo.org",
+	"GoVersion": "go1.4.2",
+	"Deps": []
+}
