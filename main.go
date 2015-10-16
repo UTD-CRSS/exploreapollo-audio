@@ -50,7 +50,7 @@ func downloadFromS3AndSave(filename string) string {
 	out, err := os.Create(clipPath)
 	check(err)
 	defer out.Close()
-	resp, err := http.Get("http://exploreapollo-tmp.s3.amazonaws.com/audio/Tape885_20July_20-07-00_HR2U_LunarLanding" + filename)
+	resp, err := http.Get("http://exploreapollo-tmp.s3.amazonaws.com/audio/Tape885_20July_20-07-00_HR2U_LunarLanding/" + filename)
 	check(err)
 	defer resp.Body.Close()
 	_, err = io.Copy(out, resp.Body)
@@ -130,7 +130,9 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	for n := range tracks {
 		tmpStr1 := fmt.Sprintf("%s.wav", tracks[n])
 		// tmpStr2 := fmt.Sprintf("%s.trs", tracks[n])
-		fp := downloadFromS3AndSave(tmpStr1)
+		// fp := downloadFromS3AndSave(tmpStr1)
+		fp := fmt.Sprintf("%s", tmpStr1)
+		fmt.Println("Pretending to download " + fp)
 		audioFiles = append(audioFiles, fp)
 		//append(trsFiles, downloadFromS3AndSave(tmpStr2))
 	}
@@ -142,31 +144,15 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "timecode: %s, startsecond: %d\n", timecode, thyme(timecode))
 
 	// mmmmmmagic
-	// sox, err := exec.LookPath("sox")
-	// check(err)
-	// fmt.Println("using sox " + sox)
-	// ffmpeg, err := exec.LookPath("ffmpeg")
-	// check(err)
-	// fmt.Println("using ffmpeg " + ffmpeg)
+	// there's probably a better way to do this. halp.
 	soxArgs := []string{"-t", "wav", "-m"}
 	soxArgs = append(soxArgs, audioFiles...)
 	soxArgs = append(soxArgs, "-p")
 	fmt.Println(soxArgs)
-	// soxCommand := exec.Command(sox, soxArgs...)
+
 	ffmpegArgs := []string{"-i", "-", "-f", format, "-ab", "256k", "pipe:"}
 	fmt.Println(ffmpegArgs)
-	// ffmpegCommand := exec.Command(ffmpeg, ffmpegArgs...)
-	fw := flushWriter{w: w}
-	if f, ok := w.(http.Flusher); ok {
-		fw.f = f
-	}
-	// ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
-	// ffmpegCommand.Stdout = &fw
-	// ffmpegCommand.Stderr = os.Stdout
-	// ffmpegCommand.Start()
-	// soxCommand.Run()
-	// ffmpegCommand.Wait()
-	fmt.Println("done")
+
 }
 
 
