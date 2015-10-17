@@ -119,8 +119,8 @@ func thyme(timecode string) int {
 }
 
 func streamHandler(w http.ResponseWriter, r *http.Request) {
-	// .../stream?track=14_SPACE-ENVIRONMENT_20July_20-07-00&track=16_SPAN_20July_20-07-00&track=18_BOOSTER-C_20July_20-07-00&format=mp3&t=201200700
-	// TODO: validate query ie. filename.wav and filename.trs has to exist, format is mp3 or ogg, t is DDDHHMMSS
+	// .../stream?track=14_SPACE-ENVIRONMENT_20July_20-07-00&track=16_SPAN_20July_20-07-00&track=18_BOOSTER-C_20July_20-07-00&format=aac&t=201200700
+	// TODO: validate query ie. filename.wav and filename.trs has to exist, format is aac or ogg, t is DDDHHMMSS
 
 	var audioFiles []string
 	//var trsFiles []string
