@@ -117,14 +117,16 @@ func thyme(timecode string) int {
 
 func streamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "audio/mpeg")
-	// .../stream?track=14_SPACE-ENVIRONMENT_20July_20-07-00&track=16_SPAN_20July_20-07-00&track=18_BOOSTER-C_20July_20-07-00&format=aac&t=201200700
+	// .../stream?track=14_SPACE-ENVIRONMENT_20July_20-07-00&track=16_SPAN_20July_20-07-00&track=18_BOOSTER-C_20July_20-07-00&format=aac&t=1023255&len=300
 	// TODO: validate: filename.wav, filename.trs exist
 	// TODO: validate: format is aac or ogg
-	// TODO: validate: t is DDDHHMMSS
+	// TODO: validate: t is accepted MET HHHDDMM
 
 	var audioFiles []string
 	r.ParseForm()
 
+	// use tracks parameter to query DB and find where appropriate track(s) live
+	// may need multple tracks of the same channel in case length exceeds end of file MET
 	tracks := r.Form["track"]
 	for n := range tracks {
 		tmpStr1 := fmt.Sprintf("%s.wav", tracks[n])
@@ -136,8 +138,7 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	format := r.Form["format"][0]
 	timecode := r.Form["t"][0]
 	// TODO: convert MET timecode to start second in appropriate file
-	fmt.Fprintf(w, "format: %s\n", format)
-	fmt.Fprintf(w, "timecode: %s, startsecond: %d\n", timecode, thyme(timecode))
+	fmt.Fprintf(w, "debug\n -- format: %s --\n -- timecode: %s --\n -- startsecond: %s --", format, timecode, thyme(timecode))
 
 	// mmmmmmagic
 	sox, err := exec.LookPath("sox")
@@ -146,19 +147,20 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	check(err)
 	fmt.Println("using ffmpeg " + ffmpeg)
-	
+
 	// there's probably a better way to do this. halp.
+	// TODO: time stuff
 	soxArgs := []string{"-t", "wav", "-m"}
 	soxArgs = append(soxArgs, audioFiles...)
 	soxArgs = append(soxArgs, "-p")
 	soxCommand := exec.Command(sox, soxArgs...)
-	
+
 	var ffmpegArgs []string
 	if format == AAC {
 		// ffmpegArgs = []string{"-i", "-", "-strict", "2", "-c:a", "aac", "-b:a", "240k", "-f", "m4a", "pipe:"}
 		ffmpegArgs = []string{"-i", "-", "-c:a", "libfdk_aac", "-b:a", "256k", "-f", "m4a", "pipe:"}
 		// dued idek wut encoder
-		// works, but gotta compile ffmpeg with special options
+		// works, but gotta compile ffmpeg on server with special options
 	} else if format == OGG {
 		ffmpegArgs = []string{"-i", "-", "-c:a", "libvorbis", "-qscale:a", "6", "-f", "ogg", "pipe:"}
 	} else {
@@ -167,20 +169,20 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		ffmpegArgs = []string{"-i", "-", "-f", "mp3", "-ab", "256k", "pipe:"}
 	}
 	ffmpegCommand := exec.Command(ffmpeg, ffmpegArgs...)
-	
+
 	fw := flushWriter{w: w}
 	if f, ok := w.(http.Flusher); ok {
 		fw.f = f
 	}
-	
+
 	ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
 	ffmpegCommand.Stdout = &fw
 	ffmpegCommand.Stderr = os.Stdout
-		
+
 	ffmpegCommand.Start()
 	soxCommand.Run()
 	ffmpegCommand.Wait()
-	
+
 	fmt.Println("done")
 }
 
