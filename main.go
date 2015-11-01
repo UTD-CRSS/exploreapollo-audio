@@ -156,7 +156,6 @@ func endMET(start int, duration int) int {
 }
 
 
-// http://localhost:5000/stream?mission=14&channel=14&channel=18&channel=24&format=aac&t=369300000&len=600
 func streamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "audio/mpeg")
 	// TODO: validate: filename.wav, filename.trs exist
