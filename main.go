@@ -184,9 +184,10 @@ func getLocations(rv RequestVars) []TimeSlice {
 			var startTime int
 			var endTime int
 			err = rows.Scan(&url, &startTime, &endTime)
+			fmt.Println(url)
 			check(err)
 
-			filename := fmt.Sprintf("mission%dchannel%d%d%d", rv.mission, rv.channels[ch], rv.start, rv.duration)
+			filename := fmt.Sprintf("mission%dchannel%d%d%d.wav", rv.mission, rv.channels[ch], rv.start, rv.duration)
 			loc := downloadFromS3AndSave(url, filename)
 
 			for ts := range slices {
