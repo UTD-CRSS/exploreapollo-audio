@@ -102,10 +102,10 @@ type DatabaseVars struct {
 	DB_NAME string `json:"DB_NAME"`
 }
 
-func parseParameters(r *http.Request) *RequestVars {
+func parseParameters(r *http.Request) RequestVars {
 	r.ParseForm()
 
-	var rv *RequestVars
+	var rv RequestVars
 
 	tempMission, err := strconv.Atoi(r.Form["mission"][0])
 	check(err)
@@ -133,30 +133,35 @@ func parseParameters(r *http.Request) *RequestVars {
 	return rv
 }
 
-func getLocations(rv *RequestVars) []TimeSlice {
+func getLocations(rv RequestVars) []TimeSlice {
 
 	var slices []TimeSlice
 
 	dbjson, err := ioutil.ReadFile("./config.json")
 	check(err)
-	var dbvars []DatabaseVars
+
+	var dbvars DatabaseVars
 	err = json.Unmarshal(dbjson, &dbvars)
 	check(err)
-	dbcreds := dbvars[0]
+
+	dbcreds := dbvars
 	dbinfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", dbcreds.DB_HOST, dbcreds.DB_PORT, dbcreds.DB_USER, dbcreds.DB_PASSWORD, dbcreds.DB_NAME)
 	db, err := sql.Open("postgres", dbinfo)
 	check(err)
 	defer db.Close()
 
-	stmt, err := db.Prepare("CREATE TABLE chunks_a AS SELECT * FROM chunks_a WHERE met_end > $1")
+	stmt, err := db.Prepare("CREATE TABLE chunks_a AS SELECT * FROM channel_chunks WHERE met_end > $1")
 	check(err)
 	_, err = stmt.Exec(rv.start)
 	check(err)
 
-	stmt, err = db.Prepare("CREATE TABLE chunks_b AS SELECT * FROM chunks_b WHERE met_start < $1")
+	stmt, err = db.Prepare("CREATE TABLE chunks_b AS SELECT * FROM chunks_a WHERE met_start < $1")
 	check(err)
 	reqEnd := rv.start + rv.duration
 	_, err = stmt.Exec(reqEnd)
+	check(err)
+
+	_, err = db.Query("DROP TABLE chunks_a")
 	check(err)
 
 	rows, err := db.Query("SELECT DISTINCT met_start, met_end FROM chunks_b ORDER BY met_start")
@@ -192,7 +197,7 @@ func getLocations(rv *RequestVars) []TimeSlice {
 		}
 	}
 
-	_, err = db.Query("DROP TABLE chunks_a; DROP TABLE chunks_b;")
+	_, err = db.Query("DROP TABLE chunks_b;")
 	check(err)
 	return slices
 }
