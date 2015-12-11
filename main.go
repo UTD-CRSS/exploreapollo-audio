@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 	"strconv"
+	"encoding/json"
 	"database/sql"
 	_ "github.com/lib/pq"
 )
@@ -100,46 +102,33 @@ type DatabaseVars struct {
 	DB_NAME string `json:"DB_NAME"`
 }
 
-/* LOAD DB CONFIG VARIABLES INTO STRUCT */
-func Decode(r io.Reader) (x *DatabaseVars, err error) {
-	x = new(DatabaseVars)
-	err = json.NewDecoder(r).Decode(x)
-	return x, err
-}
-
-func cleanDB(db *DB) {
-	db.Query("DROP TABLE chunks_a; DROP TABLE chunks_b;")
-	check(err)
-}
-
-func connectDB() *DB {
-	dbJson, err := ioutil.ReadFile("./config.json")
-	check(err)
-	dbCreds = Decode(dbJson)
-	dbinfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", dbCreds.DB_HOST, dbCreds.DB_PORT, dbCreds.DB_USER, dbCreds.DB_PASSWORD, dbCreds.DB_NAME)
-	db, err := sql.Open("postgres", dbinfo)
-	check(err)
-	defer db.Close()
-
-	return db
-}
-
 func parseParameters(r *http.Request) *RequestVars {
-	rv = new(RequestVars)
 	r.ParseForm()
 
-	rv.mission, err := strconv.Atoi(r.Form["mission"][0])
+	var rv *RequestVars
+
+	tempMission, err := strconv.Atoi(r.Form["mission"][0])
 	check(err)
+	rv.mission = tempMission
+
+	var tempChannels []int
 	for n := range r.Form["channel"] {
 		ch, err := strconv.Atoi(r.Form["channel"][n])
 		check(err)
-		rv.channels = append(channels, ch)
+		tempChannels = append(tempChannels, ch)
 	}
-	rv.format := r.Form["format"][0]
-	rv.start, err := strconv.Atoi(r.Form["t"][0])
+	rv.channels = tempChannels
+
+	tempFormat := r.Form["format"][0]
+	rv.format = tempFormat
+
+	tempStart, err := strconv.Atoi(r.Form["t"][0])
 	check(err)
-	rv.duation, err := strconv.Atoi(r.Form["len"][0])
+	rv.start = tempStart
+
+	tempDuration, err := strconv.Atoi(r.Form["len"][0])
 	check(err)
+	rv.duration = tempDuration
 
 	return rv
 }
@@ -148,20 +137,29 @@ func getLocations(rv *RequestVars) []TimeSlice {
 
 	var slices []TimeSlice
 
-	db := connectDB()
+	dbjson, err := ioutil.ReadFile("./config.json")
+	check(err)
+	var dbvars []DatabaseVars
+	err = json.Unmarshal(dbjson, &dbvars)
+	check(err)
+	dbcreds := dbvars[0]
+	dbinfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", dbcreds.DB_HOST, dbcreds.DB_PORT, dbcreds.DB_USER, dbcreds.DB_PASSWORD, dbcreds.DB_NAME)
+	db, err := sql.Open("postgres", dbinfo)
+	check(err)
+	defer db.Close()
 
 	stmt, err := db.Prepare("CREATE TABLE chunks_a AS SELECT * FROM chunks_a WHERE met_end > $1")
 	check(err)
-	res, err := stmt.Exec(rv.start)
+	_, err = stmt.Exec(rv.start)
 	check(err)
 
 	stmt, err = db.Prepare("CREATE TABLE chunks_b AS SELECT * FROM chunks_b WHERE met_start < $1")
 	check(err)
 	reqEnd := rv.start + rv.duration
-	res, err = stmt.Exec(reqEnd)
+	_, err = stmt.Exec(reqEnd)
 	check(err)
 
-	rows, err = db.Query("SELECT DISTINCT met_start, met_end FROM chunks_b ORDER BY met_start")
+	rows, err := db.Query("SELECT DISTINCT met_start, met_end FROM chunks_b ORDER BY met_start")
 
 	for rows.Next() {
 		var metstart int
@@ -173,27 +171,29 @@ func getLocations(rv *RequestVars) []TimeSlice {
 	}
 
 	for ch := range rv.channels {
-		stmt, err := db.Prepare("SELECT url, met_start, met_end from chunks_b cb WHERE cb.channel = $1")
-		check(err)
-		rows, err := stmt.Exec(rv.channels[ch])
+		rows, err := db.Query("SELECT url, met_start, met_end from chunks_b cb WHERE cb.channel = $1", rv.channels[ch])
 		check(err)
 
 		for rows.Next() {
 			var url string
 			var startTime int
-			var endTIme int
+			var endTime int
 			err = rows.Scan(&url, &startTime, &endTime)
 			check(err)
-			loc := downloadFromS3AndSave(url)
+
+			filename := fmt.Sprintf("mission%dchannel%d%d%d", rv.mission, rv.channels[ch], rv.start, rv.duration)
+			loc := downloadFromS3AndSave(url, filename)
 
 			for ts := range slices {
-				if (startTime == slices[ts].start && endTime == slices[ts].end)
-				location = append(location, loc)
+				if (startTime == slices[ts].start && endTime == slices[ts].end) {
+					slices[ts].location = append(slices[ts].location, loc)
+				}
 			}
 		}
 	}
 
-	cleanDB(db)
+	_, err = db.Query("DROP TABLE chunks_a; DROP TABLE chunks_b;")
+	check(err)
 	return slices
 }
 
@@ -218,16 +218,16 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		chunkFiles := timeslices[s].location
 
 		soxArgs := []string{"-t", "wav", "-m"}
-		soxArgs = append(soxArgs, channelFiles...)
+		soxArgs = append(soxArgs, chunkFiles...)
 		soxArgs = append(soxArgs, "-p")
 		soxCommand := exec.Command(sox, soxArgs...)
 
 		// convert the thing
 		var ffmpegArgs []string
-		if format == AAC || format == M4A {
+		if rv.format == AAC || rv.format == M4A {
 			ffmpegArgs = []string{"-i", "-", "-c:a", "libfdk_aac", "-b:a", "256k", "-f", M4A, "pipe:"}
 			// works, but gotta compile ffmpeg on server with special options
-		} else if format == OGG {
+		} else if rv.format == OGG {
 			ffmpegArgs = []string{"-i", "-", "-c:a", "libvorbis", "-qscale:a", "6", "-f", OGG, "pipe:"}
 		} else {
 			fmt.Println("unsupported output format requested. break some rools.")
@@ -252,4 +252,17 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("done")
 
+}
+
+
+func main() {
+	makeDir(workingDir)
+	makeDir(clipDir)
+	http.HandleFunc("/stream", streamHandler)
+	ServerPort := "5000" // default port
+	if len(os.Getenv("PORT")) > 0 {
+		ServerPort = os.Getenv("PORT")
+	}
+	fmt.Println("Starting server on " + ServerPort)
+	http.ListenAndServe(":"+ServerPort, nil)
 }
