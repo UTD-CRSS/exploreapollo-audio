@@ -178,29 +178,38 @@ func parseParameters(r *http.Request) (RequestVars, error) {
 	return rv, nil
 }
 
+func connectDb() *sql.DB {
+	// Use env default
+	dbStr := os.Getenv("DATABASE_URL")
+	// Read config if no url
+	if len(dbStr) == 0 {
+		var dbvars DatabaseVars
+		log.Println("Loading db config file")
+		dbjson, err := ioutil.ReadFile("./config.json")
+		check(err)
+		err = json.Unmarshal(dbjson, &dbvars)
+		check(err)
+		dbStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", dbvars.DB_HOST, dbvars.DB_PORT, dbvars.DB_USER, dbvars.DB_PASSWORD, dbvars.DB_NAME)
+	}
+	// Connect
+	db, err := sql.Open("postgres", dbStr)
+	check(err)
+	return db
+}
+
 func getRequestSlices(rv RequestVars) []TimeSlice {
 	var slices []TimeSlice
-	var dbvars DatabaseVars
-
-	// Read config
-	dbjson, err := ioutil.ReadFile("./config.json")
-	check(err)
-	err = json.Unmarshal(dbjson, &dbvars)
-	check(err)
-
-	// Connect
-	dbinfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", dbvars.DB_HOST, dbvars.DB_PORT, dbvars.DB_USER, dbvars.DB_PASSWORD, dbvars.DB_NAME)
-	db, err := sql.Open("postgres", dbinfo)
-	check(err)
+	// Get db
+	db := connectDb()
 	defer db.Close()
-
-	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
-	check(err)
 
 	// Psql array for ANY query
 	channelString := fmt.Sprintf("{%s}", strings.Join(rv.channels, ","))
 	reqEnd := rv.start + rv.duration
 
+	// Query
+	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
+	check(err)
 	rows, err := stmt.Query(channelString, rv.start, reqEnd)
 	check(err)
 	defer rows.Close()
