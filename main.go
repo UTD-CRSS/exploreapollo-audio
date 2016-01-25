@@ -129,6 +129,7 @@ func downloadFromS3AndSave(url string, filename string) string {
 	defer resp.Body.Close()
 	_, err = io.Copy(out, resp.Body)
 	check(err)
+	log.Println("Saved", filename)
 	return clipPath
 }
 
@@ -145,35 +146,47 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-func parseParameters(r *http.Request) (RequestVars, error) {
-	var rv RequestVars
-	r.ParseForm()
-	log.Println(r.Form)
+func parseParameters(r *http.Request) (rv RequestVars, err error) {
+	qs := r.URL.Query()
+	log.Println("Got request", qs)
 
 	// Handle empty request
-	if len(r.Form) == 0 {
+	if len(qs) == 0 {
 		log.Println("Not enough request params")
 		return rv, errors.New("bad request")
 	}
 
-	missionId := r.PostFormValue("mission")
-	tempMission, err := strconv.Atoi(missionId)
+	missionId := qs.Get("mission")
+	rv.mission, err = strconv.Atoi(missionId)
 	if err != nil {
 		log.Println("invalid mission id:", missionId)
 		return rv, err
 	}
-	rv.mission = tempMission
-	rv.channels = r.Form["channels"]
-	tempFormat := r.PostFormValue("format")
-	rv.format = tempFormat
 
-	tempStart, err := strconv.Atoi(r.PostFormValue("start"))
-	check(err)
-	rv.start = tempStart
+	rv.channels = strings.Split(qs.Get("channels"), ",")
+	// Validate all channel numbers
+	for _, a := range rv.channels {
+		if _, err := strconv.Atoi(a); err != nil {
+			log.Println("invalid channel:", a)
+			return rv, err
+		}
+	}
 
-	tempDuration, err := strconv.Atoi(r.PostFormValue("duration"))
-	check(err)
-	rv.duration = tempDuration
+	rv.format = qs.Get("format")
+
+	stStr := qs.Get("start")
+	rv.start, err = strconv.Atoi(stStr)
+	if err != nil {
+		log.Println("invalid start:", stStr)
+		return rv, err
+	}
+
+	durStr := qs.Get("duration")
+	rv.duration, err = strconv.Atoi(durStr)
+	if err != nil {
+		log.Println("invalid duration:", durStr)
+		return rv, err
+	}
 
 	return rv, nil
 }
