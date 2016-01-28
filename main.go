@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"./audio"
+	"github.com/UTD-CRSS/audio.exploreapollo.org/audio"
 )
 
 type flushWriter struct {
