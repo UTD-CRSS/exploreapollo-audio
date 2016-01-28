@@ -1,5 +1,11 @@
 {
 	"ImportPath": "github.com/UTD-CRSS/audio.exploreapollo.org",
-	"GoVersion": "go1.4.2",
-	"Deps": []
+	"GoVersion": "go1.5",
+	"Deps": [
+		{
+			"ImportPath": "github.com/lib/pq",
+			"Comment": "go1.0-cutoff-26-gf7ea31d",
+			"Rev": "f7ea31d05cd1cccff3ba98af46ccc261d4ff3fdd"
+		}
+	]
 }
