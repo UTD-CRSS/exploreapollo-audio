@@ -204,7 +204,8 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 
 	// Merge and concat all files
 	// sox "|sox -m in1 in2 -p" "|sox -m in3 in4 -p" -p
-	var soxArgs []string
+	// Use shell for sox to handle funky args
+	soxArgs := []string{"sox"}
 	for _, slice := range slices {
 		var chunkPaths []string
 		var cmdStr string
@@ -220,30 +221,28 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 		}
 		soxArgs = append(soxArgs, cmdStr) //strings.Fields(cmdStr)...
 	}
-	soxArgs = append(soxArgs, "/tmp/out.wav")
+	soxArgs = append(soxArgs, "-p")
 
-	ffmpegArgs := []string{"-i", "/tmp/out.wav", "-strict", "-2", "-c:a", "aac", "-b:a", "32k", "-f", "mp4", outFile}
+	ffmpegArgs := []string{"-i", "-", "-strict", "-2", "-c:a", "aac", "-b:a", "128k", "-f", "mp4", outFile}
 	ffmpegArgs = append(ffmpegArgs, "-y") // Force ovewrite
 
-	log.Println(soxArgs)
-	log.Println("running sox", strings.Join(soxArgs, " "))
-	newA := "sox \"| sox -m /tmp/apollo-audio/clips/mission_1_channel_14_735667000.wav /tmp/apollo-audio/clips/mission_1_channel_11_735667000.wav -p \" /tmp/out.wav"
-	soxCommand := exec.Command("sh", "-c", newA)
+	soxCmd := strings.Join(soxArgs, " ")
+	log.Println("running sox", soxCmd)
+	soxCommand := exec.Command("sh", "-c", soxCmd)
 
 	log.Println("running ffmpeg", strings.Join(ffmpegArgs, " "))
 	ffmpegCommand := exec.Command(ffmpegPath, ffmpegArgs...)
 
 	ffmpegCommand.Stdin, err = soxCommand.StdoutPipe()
 	if err != nil {
-		log.Fatal("Cant connect sox")
+		log.Fatal("Cant connect sox pipe")
 	}
 	ffmpegCommand.Stdout = os.Stdout
 	ffmpegCommand.Stderr = os.Stdout
-	soxCommand.Stdout = os.Stdout
 	soxCommand.Stderr = os.Stdout
 
-	soxCommand.Run()
 	ffmpegCommand.Start()
+	soxCommand.Run()
 	ffmpegCommand.Wait()
 
 	log.Println("Saved output to", outFile)
