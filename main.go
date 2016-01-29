@@ -70,9 +70,7 @@ func parseParameters(r *http.Request) (rv audio.RequestVars, err error) {
 	return rv, nil
 }
 
-func streamHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-type", "audio/mpeg")
-
+func handleAudioReq(w http.ResponseWriter, r *http.Request) {
 	/* PARRRAMETERS */
 	rv, err := parseParameters(r)
 	// Handle bad params
@@ -94,6 +92,17 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/stream" {
+		streamHandler(w, r, rv, slices)
+	} else {
+		fullAudioHandler(w, r, rv, slices)
+	}
+
+}
+
+func streamHandler(w http.ResponseWriter, r *http.Request, rv audio.RequestVars, slices []audio.TimeSlice) {
+	w.Header().Set("Content-type", "audio/mpeg")
+
 	fw := flushWriter{w: w}
 	if f, ok := w.(http.Flusher); ok {
 		fw.f = f
@@ -103,9 +112,18 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("done")
 }
 
+func fullAudioHandler(w http.ResponseWriter, r *http.Request, rv audio.RequestVars, slices []audio.TimeSlice) {
+	audioPath := audio.DownloadAndEncode(slices, rv)
+	http.ServeFile(w, r, audioPath)
+	log.Println("done")
+}
+
 func main() {
 	audio.InitDirs()
-	http.HandleFunc("/stream", streamHandler)
+
+	http.HandleFunc("/stream", handleAudioReq)
+	http.HandleFunc("/audio", handleAudioReq)
+
 	ServerPort := "5000" // default port
 	if len(os.Getenv("PORT")) > 0 {
 		ServerPort = os.Getenv("PORT")

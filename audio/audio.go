@@ -186,3 +186,66 @@ func DownloadAndStream(slices []TimeSlice, rv RequestVars, w io.Writer) {
 		ffmpegCommand.Wait()
 	}
 }
+
+func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
+	// Download all here. Could be done concurrently while prev slice is streaming
+	DownloadAllAudio(slices)
+
+	// Build cmds
+	soxPath, err := exec.LookPath("sox")
+	check(err)
+	log.Println("using sox " + soxPath)
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	check(err)
+	log.Println("using ffmpeg " + ffmpegPath)
+
+	audioName := fmt.Sprintf("channels_%s_%d_%d.m4a", strings.Join(rv.Channels, "."), rv.Start, rv.Duration)
+	outFile := path.Join(clipDir, audioName)
+
+	// Merge and concat all files
+	// sox "|sox -m in1 in2 -p" "|sox -m in3 in4 -p" -p
+	var soxArgs []string
+	for _, slice := range slices {
+		var chunkPaths []string
+		var cmdStr string
+		// Get files for this slice
+		for _, ch := range slice.chunks {
+			chunkPaths = append(chunkPaths, ch.localPath)
+		}
+		// Only merge with multiple files
+		if len(chunkPaths) == 1 {
+			cmdStr = chunkPaths[0]
+		} else {
+			cmdStr = fmt.Sprintf("\"| %s -m %s -p\"", "sox", strings.Join(chunkPaths, " "))
+		}
+		soxArgs = append(soxArgs, cmdStr) //strings.Fields(cmdStr)...
+	}
+	soxArgs = append(soxArgs, "/tmp/out.wav")
+
+	ffmpegArgs := []string{"-i", "/tmp/out.wav", "-strict", "-2", "-c:a", "aac", "-b:a", "32k", "-f", "mp4", outFile}
+	ffmpegArgs = append(ffmpegArgs, "-y") // Force ovewrite
+
+	log.Println(soxArgs)
+	log.Println("running sox", strings.Join(soxArgs, " "))
+	newA := "sox \"| sox -m /tmp/apollo-audio/clips/mission_1_channel_14_735667000.wav /tmp/apollo-audio/clips/mission_1_channel_11_735667000.wav -p \" /tmp/out.wav"
+	soxCommand := exec.Command("sh", "-c", newA)
+
+	log.Println("running ffmpeg", strings.Join(ffmpegArgs, " "))
+	ffmpegCommand := exec.Command(ffmpegPath, ffmpegArgs...)
+
+	ffmpegCommand.Stdin, err = soxCommand.StdoutPipe()
+	if err != nil {
+		log.Fatal("Cant connect sox")
+	}
+	ffmpegCommand.Stdout = os.Stdout
+	ffmpegCommand.Stderr = os.Stdout
+	soxCommand.Stdout = os.Stdout
+	soxCommand.Stderr = os.Stdout
+
+	soxCommand.Run()
+	ffmpegCommand.Start()
+	ffmpegCommand.Wait()
+
+	log.Println("Saved output to", outFile)
+	return outFile
+}
