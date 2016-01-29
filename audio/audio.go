@@ -223,7 +223,7 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 	}
 	soxArgs = append(soxArgs, "-p")
 
-	ffmpegArgs := []string{"-i", "-", "-strict", "-2", "-c:a", "aac", "-b:a", "128k", "-f", "mp4", outFile}
+	ffmpegArgs := []string{"-i", "-", "-strict", "-2", "-c:a", "aac", "-b:a", "96k", "-f", "mp4", outFile}
 	ffmpegArgs = append(ffmpegArgs, "-y") // Force ovewrite
 
 	soxCmd := strings.Join(soxArgs, " ")
