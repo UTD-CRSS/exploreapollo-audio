@@ -129,6 +129,27 @@ func getSoxTrimArgs(i int, rv RequestVars, slices []TimeSlice) (args []string) {
 	return args
 }
 
+func soxBulkTrimArgs(rv RequestVars, slices []TimeSlice) (args []string) {
+	slice := slices[0]
+	trimOffset := 0
+	//Look at first slice
+	if rv.Start > slice.start {
+		trimOffset = rv.Start - slice.start
+	}
+	offset := float64(trimOffset) / 1000.0
+	offStr := strconv.FormatFloat(offset, 'f', 4, 64)
+	log.Println("Trimming first slice by", offStr)
+
+	df := float64(rv.Duration) / 1000.0
+	durStr := strconv.FormatFloat(df, 'f', 4, 64)
+	log.Println("Duration is", durStr)
+
+	args = append(args, "trim", offStr, durStr)
+	log.Println(args)
+
+	return args
+}
+
 func DownloadAndStream(slices []TimeSlice, rv RequestVars, w io.Writer) {
 	// Download all here. Could be done concurrently while prev slice is streaming
 	DownloadAllAudio(slices)
@@ -222,6 +243,9 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 		soxArgs = append(soxArgs, cmdStr) //strings.Fields(cmdStr)...
 	}
 	soxArgs = append(soxArgs, "-p")
+
+	//Trim file
+	soxArgs = append(soxArgs, soxBulkTrimArgs(rv, slices)...)
 
 	ffmpegArgs := []string{"-i", "-", "-strict", "-2", "-c:a", "aac", "-b:a", "96k", "-f", "mp4", outFile}
 	ffmpegArgs = append(ffmpegArgs, "-y") // Force ovewrite
