@@ -14,6 +14,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	_ "github.com/lib/pq"
 )
@@ -83,11 +84,28 @@ func makeDir(dir string) {
 }
 
 func downloadAllAudio(chunkMap map[int][]AudioChunk) {
+	// Parallel download
+	var wg sync.WaitGroup
+	itemQ := make(chan AudioChunk)
+	workerCount := 2
+	// launch workers
+	for a := 0; a < workerCount; a++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range itemQ {
+				downloadFromS3AndSave(item.url, item.localPath)
+			}
+		}()
+	}
+	// Add items
 	for _, a := range chunkMap {
 		for _, b := range a {
-			downloadFromS3AndSave(b.url, b.localPath)
+			itemQ <- b
 		}
 	}
+	close(itemQ)
+	wg.Wait()
 }
 
 func downloadFromS3AndSave(url string, filename string) string {
@@ -124,9 +142,7 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 
 func parseParameters(r *http.Request) (RequestVars, error) {
 	var rv RequestVars
-
 	r.ParseForm()
-
 	log.Println(r.Form)
 
 	// Handle empty request
@@ -142,9 +158,7 @@ func parseParameters(r *http.Request) (RequestVars, error) {
 		return rv, err
 	}
 	rv.mission = tempMission
-
 	rv.channels = r.Form["channels"]
-
 	tempFormat := r.PostFormValue("format")
 	rv.format = tempFormat
 
@@ -192,14 +206,12 @@ func getLocations(rv RequestVars) map[int][]AudioChunk {
 		var chunk AudioChunk
 		err = rows.Scan(&chunk.start, &chunk.end, &chunk.url, &chunk.channel)
 		if err == nil {
-			//log.Println(chunk)
 			// Set local name
 			loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.mission, chunk.channel, chunk.start)
 			chunk.localPath = path.Join(clipDir, loc)
 			chunkMap[chunk.channel] = append(chunkMap[chunk.channel], chunk)
 		}
 	}
-	//log.Println(chunkMap)
 	return chunkMap
 }
 
@@ -225,7 +237,6 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	downloadAllAudio(chunkMap)
-	//log.Println(chunkMap)
 
 	sox, err := exec.LookPath("sox")
 	check(err)
