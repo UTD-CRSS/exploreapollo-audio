@@ -1,16 +1,19 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 	"strconv"
-	"encoding/json"
-	"database/sql"
+
 	_ "github.com/lib/pq"
 )
 
@@ -80,32 +83,38 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 
 /* container for the request variables */
 type RequestVars struct {
-	mission int
+	mission  int
 	channels []int
-	format string
-	start int
+	format   string
+	start    int
 	duration int
 }
 
 /* local paths to audio files for all channels belonging to particular time slice */
 type TimeSlice struct {
-	start int
-	end int
+	start    int
+	end      int
 	location []string
 }
 
 type DatabaseVars struct {
-	DB_HOST string `json:"DB_HOST"`
-	DB_PORT int `json:"DB_PORT"`
-	DB_USER string `json:"DB_USER"`
+	DB_HOST     string `json:"DB_HOST"`
+	DB_PORT     int    `json:"DB_PORT"`
+	DB_USER     string `json:"DB_USER"`
 	DB_PASSWORD string `json:"DB_PASSWORD"`
-	DB_NAME string `json:"DB_NAME"`
+	DB_NAME     string `json:"DB_NAME"`
 }
 
-func parseParameters(r *http.Request) RequestVars {
+func parseParameters(r *http.Request) (RequestVars, error) {
+	var rv RequestVars
+
 	r.ParseForm()
 
-	var rv RequestVars
+	// Handle empty request
+	if len(r.Form) == 0 {
+		log.Println("Received empty request")
+		return rv, errors.New("empty request")
+	}
 
 	tempMission, err := strconv.Atoi(r.Form["mission"][0])
 	check(err)
@@ -130,7 +139,7 @@ func parseParameters(r *http.Request) RequestVars {
 	check(err)
 	rv.duration = tempDuration
 
-	return rv
+	return rv, nil
 }
 
 func getLocations(rv RequestVars) []TimeSlice {
@@ -176,7 +185,7 @@ func getLocations(rv RequestVars) []TimeSlice {
 	}
 
 	for ch := range rv.channels {
-		rows, err := db.Query("SELECT url, met_start, met_end from chunks_b cb WHERE cb.channel = $1", rv.channels[ch])
+		rows, err := db.Query("SELECT url, met_start, met_end from channel_chunks cb WHERE cb.channel = $1", rv.channels[ch])
 		check(err)
 
 		for rows.Next() {
@@ -191,7 +200,7 @@ func getLocations(rv RequestVars) []TimeSlice {
 			loc := downloadFromS3AndSave(url, filename)
 
 			for ts := range slices {
-				if (startTime == slices[ts].start && endTime == slices[ts].end) {
+				if startTime == slices[ts].start && endTime == slices[ts].end {
 					slices[ts].location = append(slices[ts].location, loc)
 				}
 			}
@@ -207,7 +216,12 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "audio/mpeg")
 
 	/* PARRRAMETERS */
-	rv := parseParameters(r)
+	rv, err := parseParameters(r)
+	// Handle bad params
+	if err != nil {
+		http.Error(w, http.StatusText(500), 500)
+		return
+	}
 
 	/* DEEBEE */
 	timeslices := getLocations(rv)
@@ -259,7 +273,6 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("done")
 
 }
-
 
 func main() {
 	makeDir(workingDir)
