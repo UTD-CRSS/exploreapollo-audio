@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -22,6 +23,38 @@ var clipDir string = path.Join(workingDir, "clips")
 var AAC string = "aac"
 var M4A string = "m4a"
 var OGG string = "ogg"
+
+/* container for the request variables */
+type RequestVars struct {
+	mission  int
+	channels []string
+	format   string
+	start    int
+	duration int
+}
+
+/* local paths to audio files for all channels belonging to particular time slice */
+type TimeSlice struct {
+	start    int
+	end      int
+	location []string
+}
+
+type AudioChunk struct {
+	start     int
+	end       int
+	url       string
+	localPath string
+	channel   int
+}
+
+type DatabaseVars struct {
+	DB_HOST     string `json:"DB_HOST"`
+	DB_PORT     int    `json:"DB_PORT"`
+	DB_USER     string `json:"DB_USER"`
+	DB_PASSWORD string `json:"DB_PASSWORD"`
+	DB_NAME     string `json:"DB_NAME"`
+}
 
 func check(e error) {
 	if e != nil {
@@ -49,14 +82,22 @@ func makeDir(dir string) {
 	}
 }
 
+func downloadAllAudio(chunkMap map[int][]AudioChunk) {
+	for _, a := range chunkMap {
+		for _, b := range a {
+			downloadFromS3AndSave(b.url, b.localPath)
+		}
+	}
+}
+
 func downloadFromS3AndSave(url string, filename string) string {
-	clipPath := path.Join(clipDir, filename)
+	log.Println("Downloading", url, "to", filename)
+	clipPath := filename
 	if _, err := os.Stat(clipPath); err == nil {
-		fmt.Println("file exists; skipping")
+		log.Println("file exists; skipping")
 		return clipPath
 	}
-	fmt.Println(clipPath)
-	fmt.Println("debug")
+
 	out, err := os.Create(clipPath)
 	check(err)
 	defer out.Close()
@@ -81,70 +122,47 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-/* container for the request variables */
-type RequestVars struct {
-	mission  int
-	channels []int
-	format   string
-	start    int
-	duration int
-}
-
-/* local paths to audio files for all channels belonging to particular time slice */
-type TimeSlice struct {
-	start    int
-	end      int
-	location []string
-}
-
-type DatabaseVars struct {
-	DB_HOST     string `json:"DB_HOST"`
-	DB_PORT     int    `json:"DB_PORT"`
-	DB_USER     string `json:"DB_USER"`
-	DB_PASSWORD string `json:"DB_PASSWORD"`
-	DB_NAME     string `json:"DB_NAME"`
-}
-
 func parseParameters(r *http.Request) (RequestVars, error) {
 	var rv RequestVars
 
 	r.ParseForm()
 
+	log.Println(r.Form)
+
 	// Handle empty request
 	if len(r.Form) == 0 {
-		log.Println("Received empty request")
-		return rv, errors.New("empty request")
+		log.Println("Not enough request params")
+		return rv, errors.New("bad request")
 	}
 
-	tempMission, err := strconv.Atoi(r.Form["mission"][0])
-	check(err)
+	missionId := r.PostFormValue("mission")
+	tempMission, err := strconv.Atoi(missionId)
+	if err != nil {
+		log.Println("invalid mission id:", missionId)
+		return rv, err
+	}
 	rv.mission = tempMission
 
-	var tempChannels []int
-	for n := range r.Form["channel"] {
-		ch, err := strconv.Atoi(r.Form["channel"][n])
-		check(err)
-		tempChannels = append(tempChannels, ch)
-	}
-	rv.channels = tempChannels
+	rv.channels = r.Form["channels"]
 
-	tempFormat := r.Form["format"][0]
+	tempFormat := r.PostFormValue("format")
 	rv.format = tempFormat
 
-	tempStart, err := strconv.Atoi(r.Form["t"][0])
+	tempStart, err := strconv.Atoi(r.PostFormValue("start"))
 	check(err)
 	rv.start = tempStart
 
-	tempDuration, err := strconv.Atoi(r.Form["len"][0])
+	tempDuration, err := strconv.Atoi(r.PostFormValue("duration"))
 	check(err)
 	rv.duration = tempDuration
 
 	return rv, nil
 }
 
-func getLocations(rv RequestVars) []TimeSlice {
+func getLocations(rv RequestVars) map[int][]AudioChunk {
 
-	var slices []TimeSlice
+	//var slices []TimeSlice
+	chunkMap := make(map[int][]AudioChunk)
 
 	dbjson, err := ioutil.ReadFile("./config.json")
 	check(err)
@@ -159,57 +177,30 @@ func getLocations(rv RequestVars) []TimeSlice {
 	check(err)
 	defer db.Close()
 
-	stmt, err := db.Prepare("CREATE TABLE chunks_a AS SELECT * FROM channel_chunks WHERE met_end > $1")
-	check(err)
-	_, err = stmt.Exec(rv.start)
+	//reqEnd := rv.start + rv.duration
+	channelString := fmt.Sprintf("{%s}", strings.Join(rv.channels, ","))
+
+	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[])") // WHERE met_end > $1 AND met_start < $2")
 	check(err)
 
-	stmt, err = db.Prepare("CREATE TABLE chunks_b AS SELECT * FROM chunks_a WHERE met_start < $1")
-	check(err)
-	reqEnd := rv.start + rv.duration
-	_, err = stmt.Exec(reqEnd)
+	rows, err := stmt.Query(channelString) //rv.start, reqEnd)
 	check(err)
 
-	_, err = db.Query("DROP TABLE chunks_a")
-	check(err)
-
-	rows, err := db.Query("SELECT DISTINCT met_start, met_end FROM chunks_b ORDER BY met_start")
+	defer rows.Close()
 
 	for rows.Next() {
-		var metstart int
-		var metend int
-		var loc []string
-		err = rows.Scan(&metstart, &metend)
-		slice := TimeSlice{start: metstart, end: metend, location: loc}
-		slices = append(slices, slice)
-	}
-
-	for ch := range rv.channels {
-		rows, err := db.Query("SELECT url, met_start, met_end from channel_chunks cb WHERE cb.channel = $1", rv.channels[ch])
-		check(err)
-
-		for rows.Next() {
-			var url string
-			var startTime int
-			var endTime int
-			err = rows.Scan(&url, &startTime, &endTime)
-			fmt.Println(url)
-			check(err)
-
-			filename := fmt.Sprintf("mission%dchannel%d%d%d.wav", rv.mission, rv.channels[ch], rv.start, rv.duration)
-			loc := downloadFromS3AndSave(url, filename)
-
-			for ts := range slices {
-				if startTime == slices[ts].start && endTime == slices[ts].end {
-					slices[ts].location = append(slices[ts].location, loc)
-				}
-			}
+		var chunk AudioChunk
+		err = rows.Scan(&chunk.start, &chunk.end, &chunk.url, &chunk.channel)
+		if err == nil {
+			//log.Println(chunk)
+			// Set local name
+			loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.mission, chunk.channel, chunk.start)
+			chunk.localPath = path.Join(clipDir, loc)
+			chunkMap[chunk.channel] = append(chunkMap[chunk.channel], chunk)
 		}
 	}
-
-	_, err = db.Query("DROP TABLE chunks_b;")
-	check(err)
-	return slices
+	//log.Println(chunkMap)
+	return chunkMap
 }
 
 func streamHandler(w http.ResponseWriter, r *http.Request) {
@@ -219,59 +210,71 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	rv, err := parseParameters(r)
 	// Handle bad params
 	if err != nil {
+		log.Println("Error processing params:", err)
 		http.Error(w, http.StatusText(500), 500)
 		return
 	}
+	// All clear
+	log.Println("Handling request for ", rv)
 
 	/* DEEBEE */
-	timeslices := getLocations(rv)
+	chunkMap := getLocations(rv)
+	downloadAllAudio(chunkMap)
+	//log.Println(chunkMap)
 
 	sox, err := exec.LookPath("sox")
 	check(err)
-	fmt.Println("using sox " + sox)
+	log.Println("using sox " + sox)
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	check(err)
-	fmt.Println("using ffmpeg " + ffmpeg)
+	log.Println("using ffmpeg " + ffmpeg)
 
-	for s := range timeslices {
-
-		chunkFiles := timeslices[s].location
-
-		soxArgs := []string{"-t", "wav", "-m"}
-		soxArgs = append(soxArgs, chunkFiles...)
-		soxArgs = append(soxArgs, "-p")
-		soxCommand := exec.Command(sox, soxArgs...)
-
-		// convert the thing
-		var ffmpegArgs []string
-		if rv.format == AAC || rv.format == M4A {
-			ffmpegArgs = []string{"-i", "-", "-c:a", "libfdk_aac", "-b:a", "256k", "-f", M4A, "pipe:"}
-			// works, but gotta compile ffmpeg on server with special options
-		} else if rv.format == OGG {
-			ffmpegArgs = []string{"-i", "-", "-c:a", "libvorbis", "-qscale:a", "6", "-f", OGG, "pipe:"}
-		} else {
-			fmt.Println("unsupported output format requested. break some rools.")
-			ffmpegArgs = []string{"-i", "-", "-f", "mp3", "-ab", "256k", "pipe:"}
-		}
-		ffmpegCommand := exec.Command(ffmpeg, ffmpegArgs...)
-
-		fw := flushWriter{w: w}
-		if f, ok := w.(http.Flusher); ok {
-			fw.f = f
-		}
-
-		ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
-		ffmpegCommand.Stdout = &fw
-		ffmpegCommand.Stderr = os.Stdout
-
-		ffmpegCommand.Start()
-		soxCommand.Run()
-		ffmpegCommand.Wait()
-
+	var chunkPaths []string
+	// concat chunks of the same channel
+	for _, a := range chunkMap {
+		// Grab first one for now
+		chunkPaths = append(chunkPaths, a[0].localPath)
 	}
 
-	fmt.Println("done")
+	// Merge the channels
+	soxArgs := []string{"-t", "wav"}
+	// Only merge if there are multiple files
+	if len(chunkPaths) > 1 {
+		soxArgs = append(soxArgs, "-m")
+	}
+	soxArgs = append(soxArgs, chunkPaths...)
+	soxArgs = append(soxArgs, "-p")
+	log.Println("running sox", strings.Join(soxArgs, " "))
+	soxCommand := exec.Command(sox, soxArgs...)
 
+	// Transcode the result
+	var ffmpegArgs []string
+	if rv.format == AAC || rv.format == M4A {
+		ffmpegArgs = []string{"-i", "-", "-c:a", "libfdk_aac", "-b:a", "256k", "-f", M4A, "pipe:"}
+		// works, but gotta compile ffmpeg on server with special options
+	} else if rv.format == OGG {
+		ffmpegArgs = []string{"-i", "-", "-c:a", "libvorbis", "-qscale:a", "6", "-f", OGG, "pipe:"}
+	} else {
+		log.Println("unsupported output format requested. break some rools.")
+		ffmpegArgs = []string{"-i", "-", "-f", "mp3", "-ab", "256k", "pipe:"}
+	}
+	log.Println("running ffmpeg", strings.Join(ffmpegArgs, " "))
+	ffmpegCommand := exec.Command(ffmpeg, ffmpegArgs...)
+
+	fw := flushWriter{w: w}
+	if f, ok := w.(http.Flusher); ok {
+		fw.f = f
+	}
+
+	ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
+	ffmpegCommand.Stdout = &fw
+	ffmpegCommand.Stderr = os.Stdout
+
+	ffmpegCommand.Start()
+	soxCommand.Run()
+	ffmpegCommand.Wait()
+
+	log.Println("done")
 }
 
 func main() {
@@ -282,6 +285,6 @@ func main() {
 	if len(os.Getenv("PORT")) > 0 {
 		ServerPort = os.Getenv("PORT")
 	}
-	fmt.Println("Starting server on " + ServerPort)
+	log.Println("Starting server on " + ServerPort)
 	http.ListenAndServe(":"+ServerPort, nil)
 }
