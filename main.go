@@ -177,13 +177,13 @@ func getLocations(rv RequestVars) map[int][]AudioChunk {
 	check(err)
 	defer db.Close()
 
-	//reqEnd := rv.start + rv.duration
 	channelString := fmt.Sprintf("{%s}", strings.Join(rv.channels, ","))
 
-	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[])") // WHERE met_end > $1 AND met_start < $2")
+	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[]) AND met_end > $2 AND met_start < $3")
 	check(err)
 
-	rows, err := stmt.Query(channelString) //rv.start, reqEnd)
+	reqEnd := rv.start + rv.duration
+	rows, err := stmt.Query(channelString, rv.start, reqEnd)
 	check(err)
 
 	defer rows.Close()
@@ -219,6 +219,11 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 
 	/* DEEBEE */
 	chunkMap := getLocations(rv)
+	// Check for no audio
+	if len(chunkMap) == 0 {
+		http.Error(w, http.StatusText(404), 404)
+		return
+	}
 	downloadAllAudio(chunkMap)
 	//log.Println(chunkMap)
 
