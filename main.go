@@ -234,6 +234,38 @@ func getRequestSlices(rv RequestVars) []TimeSlice {
 	return slices
 }
 
+func getSoxTrimArgs(i int, rv RequestVars, slices []TimeSlice) (args []string) {
+	slice := slices[i]
+	trimOffset := 0
+	if i == 0 && rv.start > slice.start {
+		trimOffset = rv.start - slice.start
+		offset := float64(trimOffset) / 1000.0
+		offStr := strconv.FormatFloat(offset, 'f', 4, 64)
+		log.Println("Trimming first slice by", offStr)
+		args = append(args, "trim", offStr)
+	}
+	reqEnd := rv.start + rv.duration
+	if i == len(slices)-1 && slice.end > reqEnd {
+		var duration int
+		if rv.start > slice.start {
+			duration = reqEnd - rv.start
+		} else {
+			duration = reqEnd - slice.start
+		}
+		df := float64(duration) / 1000.0
+		durStr := strconv.FormatFloat(df, 'f', 4, 64)
+		log.Println("Trimming last slice by", durStr)
+
+		// Need starting offset if not already set
+		if trimOffset == 0 {
+			args = append(args, "trim", "0", durStr)
+		} else {
+			args = append(args, durStr)
+		}
+	}
+	return args
+}
+
 func streamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-type", "audio/mpeg")
 
@@ -253,6 +285,7 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check for no audio
 	if len(slices) == 0 {
+		log.Println("No data found for request")
 		http.Error(w, http.StatusText(404), 404)
 		return
 	}
@@ -268,7 +301,7 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("using ffmpeg " + ffmpeg)
 
 	// Process and stream each chunk
-	for _, slice := range slices {
+	for i, slice := range slices {
 		var chunkPaths []string
 		// Gather paths
 		for _, ch := range slice.chunks {
@@ -282,6 +315,10 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		soxArgs = append(soxArgs, chunkPaths...)
 		soxArgs = append(soxArgs, "-p")
+
+		// Handle trim cases on start and end
+		soxArgs = append(soxArgs, getSoxTrimArgs(i, rv, slices)...)
+
 		log.Println("running sox", strings.Join(soxArgs, " "))
 		soxCommand := exec.Command(sox, soxArgs...)
 
