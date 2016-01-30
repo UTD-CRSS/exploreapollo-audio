@@ -1,61 +1,16 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"path"
+	"strconv"
+	"strings"
+
+	"github.com/UTD-CRSS/audio.exploreapollo.org/audio"
 )
-
-var workingDir string = path.Join(os.TempDir(), "apollo-audio")
-var clipDir string = path.Join(workingDir, "clips")
-
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
-func exists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return true, err
-}
-
-func makeDir(dir string) {
-	dirExists, err := exists(dir)
-	check(err)
-	if !dirExists {
-		err := os.Mkdir(dir, 0777)
-		check(err)
-	}
-}
-
-func downloadFromS3AndSave(filename string) string {
-	clipPath := path.Join(clipDir, filename)
-	if _, err := os.Stat(clipPath); err == nil {
-		fmt.Println("file exists; skipping")
-		return clipPath
-	}
-	fmt.Println(clipPath)
-	fmt.Println("debug")
-	out, err := os.Create(clipPath)
-	check(err)
-	defer out.Close()
-	resp, err := http.Get("http://austinpray.s3.amazonaws.com/static/apolloclips/" + filename)
-	check(err)
-	defer resp.Body.Close()
-	_, err = io.Copy(out, resp.Body)
-	check(err)
-	return clipPath
-}
 
 type flushWriter struct {
 	f http.Flusher
@@ -70,41 +25,109 @@ func (fw *flushWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func parseParameters(r *http.Request) (rv audio.RequestVars, err error) {
+	qs := r.URL.Query()
+	log.Println("Got request", qs)
+
+	// Handle empty request
+	if len(qs) == 0 {
+		log.Println("Not enough request params")
+		return rv, errors.New("bad request")
+	}
+
+	missionId := qs.Get("mission")
+	rv.Mission, err = strconv.Atoi(missionId)
+	if err != nil {
+		log.Println("invalid mission id:", missionId)
+		return rv, err
+	}
+
+	rv.Channels = strings.Split(qs.Get("channels"), ",")
+	// Validate all channel numbers
+	for _, a := range rv.Channels {
+		if _, err := strconv.Atoi(a); err != nil {
+			log.Println("invalid channel:", a)
+			return rv, err
+		}
+	}
+
+	rv.Format = qs.Get("format")
+
+	stStr := qs.Get("start")
+	rv.Start, err = strconv.Atoi(stStr)
+	if err != nil {
+		log.Println("invalid start:", stStr)
+		return rv, err
+	}
+
+	durStr := qs.Get("duration")
+	rv.Duration, err = strconv.Atoi(durStr)
+	if err != nil {
+		log.Println("invalid duration:", durStr)
+		return rv, err
+	}
+
+	return rv, nil
+}
+
+func handleAudioReq(w http.ResponseWriter, r *http.Request) {
+	/* PARRRAMETERS */
+	rv, err := parseParameters(r)
+	// Handle bad params
+	if err != nil {
+		log.Println("Error processing params:", err)
+		http.Error(w, http.StatusText(500), 500)
+		return
+	}
+	// All clear
+	log.Println("Handling request for ", rv)
+
+	/* DEEBEE */
+	slices := audio.GetRequestSlices(rv)
+
+	// Check for no audio
+	if len(slices) == 0 {
+		log.Println("No data found for request")
+		http.Error(w, http.StatusText(404), 404)
+		return
+	}
+
+	if r.URL.Path == "/stream" {
+		streamHandler(w, r, rv, slices)
+	} else {
+		fullAudioHandler(w, r, rv, slices)
+	}
+
+}
+
+func streamHandler(w http.ResponseWriter, r *http.Request, rv audio.RequestVars, slices []audio.TimeSlice) {
 	w.Header().Set("Content-type", "audio/mpeg")
-	c1 := downloadFromS3AndSave("c1.wav")
-	c2 := downloadFromS3AndSave("c2.wav")
-	sox, err := exec.LookPath("sox")
-	check(err)
-	fmt.Println("using sox " + sox)
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	check(err)
-	fmt.Println("using ffmpeg " + ffmpeg)
-	soxArgs := []string{"-t", "wav", "-m", c1, c2, "-p"}
-	soxCommand := exec.Command(sox, soxArgs...)
-	ffmpegArgs := []string{"-i", "-", "-f", "mp3", "-ab", "256k", "pipe:"}
-	ffmpegCommand := exec.Command(ffmpeg, ffmpegArgs...)
+
 	fw := flushWriter{w: w}
 	if f, ok := w.(http.Flusher); ok {
 		fw.f = f
 	}
-	ffmpegCommand.Stdin, _ = soxCommand.StdoutPipe()
-	ffmpegCommand.Stdout = &fw
-	ffmpegCommand.Stderr = os.Stdout
-	ffmpegCommand.Start()
-	soxCommand.Run()
-	ffmpegCommand.Wait()
-	fmt.Println("done")
+
+	audio.DownloadAndStream(slices, rv, &fw)
+	log.Println("done")
+}
+
+func fullAudioHandler(w http.ResponseWriter, r *http.Request, rv audio.RequestVars, slices []audio.TimeSlice) {
+	audioPath := audio.DownloadAndEncode(slices, rv)
+	http.ServeFile(w, r, audioPath)
+	log.Println("done")
 }
 
 func main() {
-	makeDir(workingDir)
-	makeDir(clipDir)
-	http.HandleFunc("/stream.mp3", handler)
+	audio.InitDirs()
+
+	http.HandleFunc("/stream", handleAudioReq)
+	http.HandleFunc("/audio", handleAudioReq)
+
 	ServerPort := "5000" // default port
 	if len(os.Getenv("PORT")) > 0 {
 		ServerPort = os.Getenv("PORT")
 	}
-	fmt.Println("Starting server on " + ServerPort)
+	log.Println("Starting server on " + ServerPort)
 	http.ListenAndServe(":"+ServerPort, nil)
 }
