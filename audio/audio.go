@@ -39,11 +39,11 @@ func NewTimeSlice(start, end int) TimeSlice {
 }
 
 type AudioChunk struct {
-	start     int
-	end       int
-	url       string
-	localPath string
-	channel   int
+	start      int
+	end        int
+	url        string
+	localPath  string
+	channel_id int
 }
 
 func InitDirs() {
@@ -62,7 +62,7 @@ func GetRequestSlices(rv RequestVars) []TimeSlice {
 	reqEnd := rv.Start + rv.Duration
 
 	// Query
-	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
+	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel_id FROM audio_chunks WHERE channel_id = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
 	check(err)
 	rows, err := stmt.Query(channelString, rv.Start, reqEnd)
 	check(err)
@@ -72,7 +72,7 @@ func GetRequestSlices(rv RequestVars) []TimeSlice {
 	lastStart := -1
 	for rows.Next() {
 		var chunk AudioChunk
-		err = rows.Scan(&chunk.start, &chunk.end, &chunk.url, &chunk.channel)
+		err = rows.Scan(&chunk.start, &chunk.end, &chunk.url, &chunk.channel_id)
 		if err != nil {
 			log.Println("Error reading row", err)
 			continue
@@ -83,13 +83,13 @@ func GetRequestSlices(rv RequestVars) []TimeSlice {
 			lastStart = chunk.start
 		}
 		// Set local name
-		loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.Mission, chunk.channel, chunk.start)
+		loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.Mission, chunk.channel_id, chunk.start)
 		chunk.localPath = path.Join(clipDir, loc)
 
 		// Add to proper slice
 		for i, a := range slices {
 			if chunk.start == a.start && chunk.end == a.end {
-				slices[i].chunks[chunk.channel] = chunk
+				slices[i].chunks[chunk.channel_id] = chunk
 				break
 			}
 		}
@@ -209,7 +209,6 @@ func DownloadAndStream(slices []TimeSlice, rv RequestVars, w io.Writer) {
 }
 
 func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
-	// Download all here. Could be done concurrently while prev slice is streaming
 	DownloadAllAudio(slices)
 
 	// Build cmds
@@ -240,7 +239,7 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 		} else {
 			cmdStr = fmt.Sprintf("\"| %s -m %s -p\"", "sox", strings.Join(chunkPaths, " "))
 		}
-		soxArgs = append(soxArgs, cmdStr) //strings.Fields(cmdStr)...
+		soxArgs = append(soxArgs, cmdStr)
 	}
 	soxArgs = append(soxArgs, "-p")
 
