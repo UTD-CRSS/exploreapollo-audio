@@ -37,7 +37,7 @@ func makeDir(dir string) {
 func DownloadAllAudio(timeSlices []TimeSlice) {
 	// Parallel download
 	var wg sync.WaitGroup
-	itemQ := make(chan AudioChunk)
+	itemQ := make(chan AudioSegment)
 	workerCount := 2
 	// launch workers
 	for a := 0; a < workerCount; a++ {
@@ -51,7 +51,7 @@ func DownloadAllAudio(timeSlices []TimeSlice) {
 	}
 	// Add items
 	for _, a := range timeSlices {
-		for _, b := range a.chunks {
+		for _, b := range a.segments {
 			itemQ <- b
 		}
 	}

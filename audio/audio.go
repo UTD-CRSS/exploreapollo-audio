@@ -28,22 +28,22 @@ type RequestVars struct {
 
 /* local paths to audio files for all channels belonging to particular time slice */
 type TimeSlice struct {
-	start  int
-	end    int
-	chunks map[int]AudioChunk
+	start    int
+	end      int
+	segments map[int]AudioSegment
 }
 
 func NewTimeSlice(start, end int) TimeSlice {
-	chunks := make(map[int]AudioChunk)
-	return TimeSlice{start, end, chunks}
+	segments := make(map[int]AudioSegment)
+	return TimeSlice{start, end, segments}
 }
 
-type AudioChunk struct {
-	start     int
-	end       int
-	url       string
-	localPath string
-	channel   int
+type AudioSegment struct {
+	start      int
+	end        int
+	url        string
+	localPath  string
+	channel_id int
 }
 
 func InitDirs() {
@@ -62,7 +62,7 @@ func GetRequestSlices(rv RequestVars) []TimeSlice {
 	reqEnd := rv.Start + rv.Duration
 
 	// Query
-	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel FROM channel_chunks WHERE channel = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
+	stmt, err := db.Prepare("SELECT met_start, met_end, url, channel_id FROM audio_segments WHERE channel_id = ANY($1::integer[]) AND met_end > $2 AND met_start < $3 ORDER BY met_start")
 	check(err)
 	rows, err := stmt.Query(channelString, rv.Start, reqEnd)
 	check(err)
@@ -71,25 +71,25 @@ func GetRequestSlices(rv RequestVars) []TimeSlice {
 	//Scan results and build slices
 	lastStart := -1
 	for rows.Next() {
-		var chunk AudioChunk
-		err = rows.Scan(&chunk.start, &chunk.end, &chunk.url, &chunk.channel)
+		var segment AudioSegment
+		err = rows.Scan(&segment.start, &segment.end, &segment.url, &segment.channel_id)
 		if err != nil {
 			log.Println("Error reading row", err)
 			continue
 		}
 		//Check for new timeslice
-		if chunk.start > lastStart {
-			slices = append(slices, NewTimeSlice(chunk.start, chunk.end))
-			lastStart = chunk.start
+		if segment.start > lastStart {
+			slices = append(slices, NewTimeSlice(segment.start, segment.end))
+			lastStart = segment.start
 		}
 		// Set local name
-		loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.Mission, chunk.channel, chunk.start)
-		chunk.localPath = path.Join(clipDir, loc)
+		loc := fmt.Sprintf("mission_%d_channel_%d_%d.wav", rv.Mission, segment.channel_id, segment.start)
+		segment.localPath = path.Join(clipDir, loc)
 
 		// Add to proper slice
 		for i, a := range slices {
-			if chunk.start == a.start && chunk.end == a.end {
-				slices[i].chunks[chunk.channel] = chunk
+			if segment.start == a.start && segment.end == a.end {
+				slices[i].segments[segment.channel_id] = segment
 				break
 			}
 		}
@@ -162,20 +162,20 @@ func DownloadAndStream(slices []TimeSlice, rv RequestVars, w io.Writer) {
 	check(err)
 	log.Println("using ffmpeg " + ffmpeg)
 
-	// Process and stream each chunk
+	// Process and stream each segment
 	for i, slice := range slices {
-		var chunkPaths []string
+		var segmentPaths []string
 		// Gather paths
-		for _, ch := range slice.chunks {
-			chunkPaths = append(chunkPaths, ch.localPath)
+		for _, ch := range slice.segments {
+			segmentPaths = append(segmentPaths, ch.localPath)
 		}
 		// Merge the channels
 		soxArgs := []string{"-t", "wav"}
 		// Only merge if there are multiple files
-		if len(chunkPaths) > 1 {
+		if len(segmentPaths) > 1 {
 			soxArgs = append(soxArgs, "-m")
 		}
-		soxArgs = append(soxArgs, chunkPaths...)
+		soxArgs = append(soxArgs, segmentPaths...)
 		soxArgs = append(soxArgs, "-p")
 
 		// Handle trim cases on start and end
@@ -209,7 +209,6 @@ func DownloadAndStream(slices []TimeSlice, rv RequestVars, w io.Writer) {
 }
 
 func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
-	// Download all here. Could be done concurrently while prev slice is streaming
 	DownloadAllAudio(slices)
 
 	// Build cmds
@@ -228,19 +227,19 @@ func DownloadAndEncode(slices []TimeSlice, rv RequestVars) string {
 	// Use shell for sox to handle funky args
 	soxArgs := []string{"sox"}
 	for _, slice := range slices {
-		var chunkPaths []string
+		var segmentPaths []string
 		var cmdStr string
 		// Get files for this slice
-		for _, ch := range slice.chunks {
-			chunkPaths = append(chunkPaths, ch.localPath)
+		for _, ch := range slice.segments {
+			segmentPaths = append(segmentPaths, ch.localPath)
 		}
 		// Only merge with multiple files
-		if len(chunkPaths) == 1 {
-			cmdStr = chunkPaths[0]
+		if len(segmentPaths) == 1 {
+			cmdStr = segmentPaths[0]
 		} else {
-			cmdStr = fmt.Sprintf("\"| %s -m %s -p\"", "sox", strings.Join(chunkPaths, " "))
+			cmdStr = fmt.Sprintf("\"| %s -m %s -p\"", "sox", strings.Join(segmentPaths, " "))
 		}
-		soxArgs = append(soxArgs, cmdStr) //strings.Fields(cmdStr)...
+		soxArgs = append(soxArgs, cmdStr)
 	}
 	soxArgs = append(soxArgs, "-p")
 
