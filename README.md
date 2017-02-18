@@ -4,6 +4,30 @@ Audio Processing Server for exploreapollo.org
 
 Exposes an audio stream to be consumed by the client.
 
+
+## Dev Setup
+
+1. Install Go:
+  sudo add-apt-repository ppa:ubuntu-lxc/lxd-stable
+  sudo apt-get update
+  sudo apt-get install golang
+
+2. Create Go workspace & clone repository
+  mkdir $HOME/exploreapollo-audio
+  export GOPATH=$HOME/work       (this can be anywhere, maybe add this to ~/.bashrc)
+  mkdir $GOPATH/src/github.com/UTD-CRSS
+  cd $GOPATH/src/github.com/UTD-CRSS
+  git clone https://github.com/UTD-CRSS/exploreapollo-audio
+  mv exploreapollo-audio audio.exploreapollo.org  
+  cd audio.exploreapollo.org
+  cp sample-config.json config.json
+3. Install psql driver && compile project
+  go get github.com/lib/pq
+  go install github.com/UTD-CRSS/exploreapollo-audio/audio	
+  
+  to run server just: go run main.go
+  
+
 ## Parameters
 
 | Parameter | Domain | Description |
