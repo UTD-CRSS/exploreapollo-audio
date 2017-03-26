@@ -25,8 +25,8 @@ returns an m4a stream of Apollo 11 channels 14, 18, and 24 starting at MET 36930
 The server uses the following buildpacks, which must be installed
 via the Heroku console for deployment:
 
-https://github.com/heroku/heroku-buildpack-apt
-https://github.com/lespreludes/heroku-buildpack-ffmpeg-lame.git
-https://github.com/heroku/heroku-buildpack-go.git
+- https://github.com/heroku/heroku-buildpack-apt
+- https://github.com/lespreludes/heroku-buildpack-ffmpeg-lame.git
+- https://github.com/heroku/heroku-buildpack-go.git
 
 The file Aptfile is used by heroku-buildpack-apt to obtain additional dependencies.
