@@ -1,5 +1,5 @@
-Note: multiple buildpack is deprecated, these buildpacks now need to be added manually via Heroku console.
+Note: multiple buildpacks buildpack is deprecated, these buildpacks now need to be added manually via Heroku console.
 
-https://github.com/lepinsk/heroku-buildpack-sox.git
+https://github.com/heroku/heroku-buildpack-apt
 https://github.com/lespreludes/heroku-buildpack-ffmpeg-lame.git
 https://github.com/heroku/heroku-buildpack-go.git
