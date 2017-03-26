@@ -1,4 +1,3 @@
-
 # audio.exploreapollo.org
 
 Audio Processing Server for exploreapollo.org
@@ -20,3 +19,14 @@ Exposes an audio stream to be consumed by the client.
 `http://audio.exploreapollo.org/stream?mission=11&channels=14,18,24&start=369300000&duration=600000&format=m4a`
 
 returns an m4a stream of Apollo 11 channels 14, 18, and 24 starting at MET 369300000 (this is equivalent to MET 102:35:00) and lasting 600000 milliseconds (10 minutes).
+
+## Heroku deployment
+
+The server uses the following buildpacks, which must be installed
+via the Heroku console for deployment:
+
+https://github.com/heroku/heroku-buildpack-apt
+https://github.com/lespreludes/heroku-buildpack-ffmpeg-lame.git
+https://github.com/heroku/heroku-buildpack-go.git
+
+The file Aptfile is used by heroku-buildpack-apt to obtain additional dependencies.
