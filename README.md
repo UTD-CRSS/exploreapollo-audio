@@ -46,6 +46,8 @@ returns an m4a stream of Apollo 11 channels 14, 18, and 24 starting at MET 36930
 
 ## Heroku deployment
 
+The Heroku application is set to deploy the master branch.  The branch must be manually deployed through the Heroku console to view new changes.
+
 The server uses the following buildpacks, which must be installed
 via the Heroku console for deployment:
 
